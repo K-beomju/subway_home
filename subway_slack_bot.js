@@ -7,7 +7,7 @@ const SLACK_CHANNEL = process.env.SLACK_CHANNEL;
 const STATION = "삼성중앙";
 const UPDN = "상행"; // 동작 방향
 
-// 🔥 명언 리스트
+// 명언 리스트
 const QUOTES = [
   "오늘도 버틴 너, 진짜 잘했다.",
   "작은 전진도 결국 큰 차이를 만든다.",
@@ -27,8 +27,8 @@ function getRandomQuote() {
 
 function pickArrivals(rows) {
   return rows
-    .filter(r => (r.updnLine || "").includes(UPDN))
-    .filter(r => r.subwayId === "1009")
+    .filter((r) => (r.updnLine || "").includes(UPDN))
+    .filter((r) => r.subwayId === "1009") // 9호선
     .sort((a, b) => (Number(a.barvlDt) || 999999) - (Number(b.barvlDt) || 999999))
     .slice(0, 2);
 }
@@ -50,6 +50,20 @@ function formatTime(sec) {
   return `${min}분 ${s}초 후 도착`;
 }
 
+function getKoreaTime() {
+  return new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" })
+  );
+}
+
+function isTargetTime() {
+  const korea = getKoreaTime();
+  const hour = korea.getHours();
+  const minute = korea.getMinutes();
+
+  return hour === 17 && minute === 55;
+}
+
 async function fetchArrivals() {
   const url = `http://swopenAPI.seoul.go.kr/api/subway/${SEOUL_KEY}/json/realtimeStationArrival/0/10/${encodeURIComponent(STATION)}`;
   const { data } = await axios.get(url, { timeout: 8000 });
@@ -65,17 +79,23 @@ async function postToSlack(text) {
     },
     {
       headers: {
-        Authorization: `Bearer ${SLACK_TOKEN}`
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "Content-Type": "application/json"
       }
     }
   );
 }
 
-(async () => {
+async function main() {
   try {
+    // 한국 시간 오후 5시 55분에만 전송
+    if (!isTargetTime()) {
+      console.log("⏱ 아직 전송 시간이 아닙니다. (한국 시간 17:55에만 전송)");
+      return;
+    }
+
     const rows = await fetchArrivals();
     const picks = pickArrivals(rows);
-
     const quote = getRandomQuote();
 
     let text;
@@ -83,7 +103,7 @@ async function postToSlack(text) {
     if (picks.length === 0) {
       text = `🚇 삼성중앙역 도착 정보를 가져오지 못했습니다.\n\n💬 "${quote}"`;
     } else {
-      const lines = picks.map((r, i) => {
+      const lines = picks.map((r) => {
         let sec = Number(r.barvlDt);
         sec = applyCorrection(sec, r);
 
@@ -98,8 +118,7 @@ async function postToSlack(text) {
         return `• ${type} | ${timeText}`;
       });
 
-      text =
-`🏃 *퇴근 알림*  
+      text = `🏃 *퇴근 알림*
 ━━━━━━━━━━━━━━━
 🚇 삼성중앙 → 동작 (9호선)
 
@@ -110,9 +129,11 @@ ${lines.join("\n")}
     }
 
     await postToSlack(text);
-
+    console.log("✅ 슬랙 전송 완료");
   } catch (e) {
     console.error(e);
     await postToSlack("❌ 지하철 정보 조회 중 오류 발생");
   }
-})();
+}
+
+main();
